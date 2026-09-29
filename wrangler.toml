@@ -1,0 +1,19 @@
+# Cloudflare Worker yapılandırması.
+#
+# Bu dosya bilerek depo kökündedir: Cloudflare "Workers Builds" (GitHub
+# entegrasyonu) varsayılan olarak kök dizinde `npx wrangler deploy` çalıştırır
+# ve yapılandırmayı kökte arar. Dosya `cloudflare/` altındayken otomatik
+# dağıtım "Missing entry-point" hatasıyla düşüyordu.
+
+name = "strtg-asist-webhook"
+main = "cloudflare/telegram-webhook.js"
+compatibility_date = "2025-01-01"
+
+# Worker log'larını (dispatch hataları vb.) Cloudflare panelinden görebilmek için.
+[observability]
+enabled = true
+
+[vars]
+GITHUB_REPOSITORY = "cnbrkc/strtg-asist"
+# Güvenlik için kendi Telegram chat_id değerini eklemen önerilir:
+# ALLOWED_CHAT_IDS = "123456789"

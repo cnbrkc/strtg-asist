@@ -10,19 +10,22 @@ venv/
 # IDE / local files
 .vscode/
 .idea/
+.DS_Store
 *.swp
 *.swo
 
-# Tests / logs
+# Test / lint / coverage
 .pytest_cache/
 .ruff_cache/
 .coverage
+htmlcov/
 *.log
 
-# Telegram runtime files — user media and generated cards are never committed.
-data/*.jpg
-data/*.jpeg
-data/*.png
-data/*.webp
-data/pending/*.json
-pipeline_result.json
+# Cloudflare Wrangler
+.wrangler/
+node_modules/
+
+# Üretilen story kartları ve indirilen kullanıcı görselleri asla commit'lenmez.
+*.story_card.png
+/out/
+/tmp/
