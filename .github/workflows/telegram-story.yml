@@ -1,0 +1,80 @@
+name: Telegram Story Card
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram_file_id:
+        description: Telegram image file_id
+        required: true
+        type: string
+      telegram_chat_id:
+        description: Telegram chat_id
+        required: true
+        type: string
+      telegram_caption:
+        description: Caption containing title and body
+        required: true
+        type: string
+      telegram_filename:
+        description: Original image filename
+        required: false
+        default: telegram_image.jpg
+        type: string
+      telegram_update_id:
+        description: Telegram update_id for diagnostics
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-story-${{ inputs.telegram_chat_id }}
+  # Aynı sohbetteki ikinci kart, devam eden üretimi kesmeden sıraya girsin.
+  cancel-in-progress: false
+
+jobs:
+  story-card:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-telegram.txt
+
+      - name: Install Telegram runtime dependencies
+        run: pip install --disable-pip-version-check -r requirements-telegram.txt
+
+      - name: Compile check
+        run: python -m compileall -q core telegram
+
+      - name: Generate and send story card
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FILE_ID: ${{ inputs.telegram_file_id }}
+          TELEGRAM_CHAT_ID: ${{ inputs.telegram_chat_id }}
+          TELEGRAM_CAPTION: ${{ inputs.telegram_caption }}
+          TELEGRAM_FILENAME: ${{ inputs.telegram_filename }}
+          TELEGRAM_UPDATE_ID: ${{ inputs.telegram_update_id }}
+          PYTHONUNBUFFERED: "1"
+        run: python -m telegram.telegram_story_worker
+
+      - name: Publish diagnostics
+        if: ${{ always() }}
+        env:
+          TELEGRAM_UPDATE_ID: ${{ inputs.telegram_update_id }}
+        run: |
+          {
+            echo "## Telegram Story Card diagnostics"
+            echo "- Workflow run: $GITHUB_RUN_ID"
+            echo "- Attempt: $GITHUB_RUN_ATTEMPT"
+            echo "- Telegram update ID: ${TELEGRAM_UPDATE_ID:-not provided}"
+            echo "- Job result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

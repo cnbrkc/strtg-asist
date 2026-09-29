@@ -1,0 +1,8 @@
+name = "strtg-asist-webhook"
+main = "telegram-webhook.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+GITHUB_REPOSITORY = "cnbrkc/strtg-asist"
+# Güvenlik için kendi Telegram chat_id değerini eklemen önerilir:
+# ALLOWED_CHAT_IDS = "123456789"
