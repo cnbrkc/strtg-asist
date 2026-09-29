@@ -1,16 +1,26 @@
 """Story kartı üretim motoru.
 
 Bu modül Streamlit'ten bağımsızdır; Telegram worker'ı ve yerel Streamlit arayüzü
-aynı tasarım kodunu kullanır.
+aynı tasarım kodunu kullanır. Tek dış bağımlılık Pillow'dur.
 """
+from __future__ import annotations
+
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
-
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class StoryCardError(RuntimeError):
+    """Kart üretimi tamamlanamadığında yükseltilir.
+
+    Eskiden bu durumda girdi görselinin yolu sessizce geri döndürülüyordu; hata
+    sebebi yalnızca log'a yazıldığı için üretimde teşhis imkânsız hâle geliyordu.
+    """
 
 
 def get_project_root() -> str:
@@ -39,7 +49,13 @@ FONT_BOLD_PATH = os.path.join(get_project_root(), "assets", "Roboto-Bold.ttf")
 FONT_REG_PATH  = os.path.join(get_project_root(), "assets", "Roboto-Regular.ttf")
 
 
-def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+@lru_cache(maxsize=64)
+def _get_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    """Font nesnesini önbellekler.
+
+    Yerleşim döngüsü aynı boyutu defalarca ölçtüğü için önbelleksiz sürüm her
+    ölçümde diskten TTF okuyordu.
+    """
     path = FONT_BOLD_PATH if bold else FONT_REG_PATH
     if not os.path.exists(path):
         log(f"Font bulunamadi: {path}. Varsayilan kullaniliyor.", "WARNING")
@@ -63,6 +79,20 @@ def _tr_upper(s: str) -> str:
 
 
 def _wrap_text(draw, text, font, max_width, stroke_width=0):
+    """Metni satır genişliğine sarar ve kullanıcının yazdığı satır sonlarını korur.
+
+    Önceki sürüm ``text.split()`` kullandığı için caption'daki her satır sonu
+    yok sayılıyor, çok satırlı alt metinler tek bir paragrafa yapışıyordu.
+    """
+    lines = []
+    for paragraph in (text or "").split("\n"):
+        if not paragraph.strip():
+            continue
+        lines.extend(_wrap_paragraph(draw, paragraph, font, max_width, stroke_width))
+    return lines
+
+
+def _wrap_paragraph(draw, text, font, max_width, stroke_width=0):
     words = text.split()
     lines, current = [], ""
     for word in words:
@@ -113,13 +143,27 @@ def _prepare_text(post_text):
     return title, body
 
 
+def _line_height(font, stroke_width: int = 0) -> int:
+    """Satır yüksekliğini font metriklerinden hesaplar.
+
+    Önceki sürüm her satırın *mürekkep* yüksekliğini (textbbox) ilerleme miktarı
+    olarak kullanıyordu. Metin ``anchor="mt"`` ile satır kutusunun üstünden
+    çizildiği için bu değer gerçek satır yüksekliğinden küçüktü ve çıkıntısı
+    olmayan satırlar ("Satır bir" gibi) daha az yer kaplayarak satır aralığını
+    eğrelti gösteriyordu. Font metriği tüm satırlarda aynı sonucu verir.
+    """
+    try:
+        ascent, descent = font.getmetrics()
+    except AttributeError:  # ImageFont.load_default() bazı sürümlerde metrik vermez
+        return font.getbbox("Ag")[3] + 2 * stroke_width
+    return ascent + descent + 2 * stroke_width
+
+
 def _draw_centered_line(canvas, x_center, y_top, text, font, fill, stroke_width, stroke_fill):
     draw = ImageDraw.Draw(canvas)
-    b = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width, anchor="lt")
-    lh = b[3] - b[1]
     draw.text((x_center, y_top), text, font=font, fill=fill,
               stroke_width=stroke_width, stroke_fill=stroke_fill, anchor="mt")
-    return lh
+    return _line_height(font, stroke_width)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -135,6 +179,12 @@ def _draw_centered_line(canvas, x_center, y_top, text, font, fill, stroke_width,
 #  Formül:  g = (1920 − içerik) / 7
 # ═══════════════════════════════════════════════════════════
 def create_social_card(post_text: str, image_path: str, output_path: str) -> str:
+    """1080x1920 story kartını üretir ve ``output_path`` değerini döndürür.
+
+    Raises:
+        StoryCardError: Kart üretilemediğinde. Logo/arka plan gibi tekil
+            adımların hataları yutulur, kart yine de üretilir.
+    """
     try:
         title, body = _prepare_text(post_text)
 
@@ -187,31 +237,25 @@ def create_social_card(post_text: str, image_path: str, output_path: str) -> str
         dummy = Image.new("RGB", (1, 1))
         dd    = ImageDraw.Draw(dummy)
 
+        def _block_height(lines, font, stroke_width, line_gap):
+            """Çizim döngüsüyle birebir aynı formül — ölçüm/çizim kayması olmasın."""
+            if not lines:
+                return 0
+            return len(lines) * _line_height(font, stroke_width) + (len(lines) - 1) * line_gap
+
         def measure_title(fs):
             if not title:
                 return 0, [], None
             f = _get_font(fs, bold=True)
             lns = _wrap_text(dd, title, f, MAX_TEXT_W, TITLE_STROKE_WIDTH)
-            h = sum(
-                (dd.textbbox((0, 0), l, font=f, stroke_width=TITLE_STROKE_WIDTH, anchor="lt")[3]
-                 - dd.textbbox((0, 0), l, font=f, stroke_width=TITLE_STROKE_WIDTH, anchor="lt")[1])
-                + TITLE_LINE_GAP for l in lns)
-            if lns:
-                h -= TITLE_LINE_GAP
-            return h, lns, f
+            return _block_height(lns, f, TITLE_STROKE_WIDTH, TITLE_LINE_GAP), lns, f
 
         def measure_body(fs):
             if not body:
                 return 0, [], None
             f = _get_font(fs, bold=False)
             lns = _wrap_text(dd, body, f, MAX_TEXT_W, BODY_STROKE_WIDTH)
-            h = sum(
-                (dd.textbbox((0, 0), l, font=f, stroke_width=BODY_STROKE_WIDTH, anchor="lt")[3]
-                 - dd.textbbox((0, 0), l, font=f, stroke_width=BODY_STROKE_WIDTH, anchor="lt")[1])
-                + BODY_LINE_GAP for l in lns)
-            if lns:
-                h -= BODY_LINE_GAP
-            return h, lns, f
+            return _block_height(lns, f, BODY_STROKE_WIDTH, BODY_LINE_GAP), lns, f
 
         def fit_image(slot_h):
             if src_img is None:
@@ -250,11 +294,13 @@ def create_social_card(post_text: str, image_path: str, output_path: str) -> str
             if img_slot_h > IMG_H_MIN:
                 img_slot_h = max(IMG_H_MIN, img_slot_h - 12); shrunk = True
             if not shrunk:
-                gap = GAP_MIN
+                # Fontlar ve görsel en küçük hâlinde: boşluğu sıfıra kadar kısarak
+                # taşmayı engelle. Sabit GAP_MIN kullanmak, çok uzun metinlerde
+                # bloğun tuvali aşmasına ve üst kısmın kırpılmasına yol açıyordu.
+                gap = max(0.0, (CANVAS_HEIGHT - content_h) / num_gaps)
                 break
 
-        if gap > GAP_MAX:
-            gap = GAP_MAX
+        gap = min(gap, GAP_MAX)
 
         # ── Blok yüksekliği ve başlangıç Y ──
         total_block_h = content_h + num_gaps * gap
@@ -343,9 +389,14 @@ def create_social_card(post_text: str, image_path: str, output_path: str) -> str
         else:
             final.save(output_path, format="JPEG", quality=95, optimize=True, subsampling=0)
 
-        log(f"Kart olusturuldu: {output_path}  |  gap={gap:.0f}  title={tfs}  body={bfs}  img_h={actual_img_h}  dagilim=1-1-1-1-3")
+        log(
+            f"Kart olusturuldu: {output_path}  |  gap={gap:.0f}  title={tfs}  "
+            f"body={bfs}  img_h={actual_img_h}  dagilim=1-1-1-1-3"
+        )
         return output_path
 
-    except Exception as e:
-        log(f"Kart hatasi: {e}", "ERROR")
-        return image_path
+    except StoryCardError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - tek bir hata sınıfına normalize ediyoruz
+        log(f"Kart hatasi: {exc}", "ERROR")
+        raise StoryCardError(f"Story kartı üretilemedi: {exc}") from exc

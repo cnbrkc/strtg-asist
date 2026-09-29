@@ -26,7 +26,7 @@ DAYANIKLILIĞIN ADI: TOYOTA COROLLA
 Sadece bu hafta geçerlidir! Fiyat: 1.250.000 TL
 ```
 
-İlk satır, eski Streamlit uygulamasındaki **Başlık** alanına; kalan satırlar **Alt Metin** alanına karşılık gelir. Başlık Türkçe kurallara göre büyük harfe çevrilir. Sonuç 1080x1920 PNG story kartıdır.
+İlk satır, eski Streamlit uygulamasındaki **Başlık** alanına; kalan satırlar **Alt Metin** alanına karşılık gelir. Başlık Türkçe kurallara göre büyük harfe çevrilir. Alt metinde yazdığın satır sonları kartta da korunur. Sonuç 1080x1920 PNG story kartıdır.
 
 `/start` veya `/help` komutları kullanım talimatını gösterir. Görsel açıklamasız gönderilirse bot nasıl göndermen gerektiğini söyler.
 
@@ -42,14 +42,30 @@ GitHub Actions (Pillow)
 Telegram'a hazır Story kartı
 ```
 
-Dosyalar:
+Dosya yapısı:
 
-- `core/story_card.py`: Streamlit'ten bağımsız, ortak Story üretim motoru.
-- `story_asistani.py`: Eski yerel Streamlit kullanımını koruyan arayüz.
-- `cloudflare/telegram-webhook.js`: Telegram webhook'u ve GitHub dispatch köprüsü.
-- `telegram/telegram_story_worker.py`: Actions içinde görsel indirme, üretim ve gönderim.
-- `.github/workflows/telegram-story.yml`: Üretim workflow'u.
-- `tests/`: Kart motoru ve token maskeleme testleri.
+```text
+strtg-asist/
+├─ strtg_asist/                  # Tek Python paketi
+│  ├─ story_card.py              # Streamlit'ten bağımsız, ortak story üretim motoru
+│  └─ telegram_worker.py         # Actions içinde görsel indirme, üretim ve gönderim
+├─ story_asistani.py             # Yerel Streamlit arayüzü (isteğe bağlı)
+├─ cloudflare/
+│  ├─ telegram-webhook.js        # Telegram webhook'u ve GitHub dispatch köprüsü
+│  └─ wrangler.toml              # Worker yapılandırması
+├─ .github/workflows/
+│  ├─ telegram-story.yml         # Üretim workflow'u
+│  └─ ci.yml                     # Test + lint + yapılandırma tutarlılık kontrolleri
+├─ assets/                       # Logo ve Roboto fontları
+├─ tests/                        # Kart motoru ve Telegram worker testleri
+├─ pyproject.toml                # pytest + ruff yapılandırması
+├─ requirements.txt              # Streamlit arayüzü + motor
+├─ requirements-telegram.txt     # Actions üretim runtime'ı (yalnızca Pillow)
+└─ requirements-dev.txt          # Test ve lint araçları
+```
+
+> Paket adı bilerek `telegram` değil `strtg_asist`: üst seviyede `telegram` adlı bir
+> paket, PyPI'daki `python-telegram-bot` kütüphanesinin `telegram` modülünü gölgeler.
 
 ## 3. Ön hazırlık
 
@@ -199,7 +215,8 @@ pip install -r requirements.txt
 python -m streamlit run story_asistani.py
 ```
 
-Tarayıcıda Streamlit adresi açılır. Telegram ve Streamlit aynı `core/story_card.py` motorunu kullanır.
+Tarayıcıda Streamlit adresi açılır. Telegram ve Streamlit aynı
+`strtg_asist/story_card.py` motorunu kullanır.
 
 ## 7. Sorun giderme
 
@@ -237,9 +254,18 @@ GitHub → **Actions → Telegram Story Card** → başarısız run'a gir. En s�
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest -q
-ruff check core telegram tests story_asistani.py --select F,E9
-node --check cloudflare/telegram-webhook.js
+
+pytest                                            # birim testleri
+ruff check strtg_asist tests story_asistani.py    # lint
+node --check cloudflare/telegram-webhook.js       # Worker sözdizimi
 ```
 
-Her pull request'te aynı kontroller GitHub Actions CI tarafından çalıştırılır.
+Her pull request'te aynı kontroller GitHub Actions CI tarafından çalıştırılır. CI
+ayrıca iki ek güvenlik ağı içerir:
+
+- **Telegram runtime importu:** Worker yalnızca `requirements-telegram.txt`
+  (Pillow) ile import edilebiliyor mu? Üretim workflow'u Streamlit kurmadığı için
+  kazara eklenen bir bağımlılık ancak üretimde patlardı.
+- **`workflow_dispatch` input eşleşmesi:** Cloudflare Worker'ın gönderdiği input
+  adları ile workflow'un beklediği adlar ayrışırsa GitHub dispatch'i `422` ile
+  reddeder ve bot sessizce çalışmaz olur. Bu kontrol farkı PR'da yakalar.

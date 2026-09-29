@@ -52,11 +52,12 @@ jobs:
       - name: Install Telegram runtime dependencies
         run: pip install --disable-pip-version-check -r requirements-telegram.txt
 
-      - name: Compile check
-        run: python -m compileall -q core telegram
-
+      # Kullanıcı kartını beklerken derleme kontrolü yapmıyoruz; aynı kontrol
+      # CI workflow'unda her pull request'te zaten çalışıyor.
       - name: Generate and send story card
         env:
+          # Kullanıcı girdileri yalnızca env üzerinden aktarılır; `run:` içine
+          # interpolasyon script injection'a açık olurdu.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_FILE_ID: ${{ inputs.telegram_file_id }}
           TELEGRAM_CHAT_ID: ${{ inputs.telegram_chat_id }}
@@ -64,17 +65,18 @@ jobs:
           TELEGRAM_FILENAME: ${{ inputs.telegram_filename }}
           TELEGRAM_UPDATE_ID: ${{ inputs.telegram_update_id }}
           PYTHONUNBUFFERED: "1"
-        run: python -m telegram.telegram_story_worker
+        run: python -m strtg_asist.telegram_worker
 
       - name: Publish diagnostics
         if: ${{ always() }}
         env:
           TELEGRAM_UPDATE_ID: ${{ inputs.telegram_update_id }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           {
             echo "## Telegram Story Card diagnostics"
             echo "- Workflow run: $GITHUB_RUN_ID"
             echo "- Attempt: $GITHUB_RUN_ATTEMPT"
             echo "- Telegram update ID: ${TELEGRAM_UPDATE_ID:-not provided}"
-            echo "- Job result: ${{ job.status }}"
+            echo "- Job result: $JOB_STATUS"
           } >> "$GITHUB_STEP_SUMMARY"

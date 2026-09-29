@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -28,23 +32,58 @@ jobs:
         run: pip install --disable-pip-version-check -r requirements-dev.txt
 
       - name: Compile Python
-        run: python -m compileall -q core telegram tests story_asistani.py
+        run: python -m compileall -q strtg_asist tests story_asistani.py
 
       - name: Unit tests
-        run: pytest -q
+        run: pytest
 
       - name: Fatal lint checks
-        run: ruff check core telegram tests story_asistani.py --select F,E9
+        run: ruff check strtg_asist tests story_asistani.py
+
+      - name: Verify Telegram runtime has no extra dependency
+        # Üretim workflow'u yalnızca Pillow kurar; worker'ın stdlib dışına
+        # çıkmadığını burada erkenden yakalayalım.
+        run: |
+          python -m venv /tmp/prodenv
+          /tmp/prodenv/bin/pip install --disable-pip-version-check -q -r requirements-telegram.txt
+          /tmp/prodenv/bin/python -c "import strtg_asist.telegram_worker; print('telegram worker imports OK')"
 
       - name: Validate workflow YAML
         run: |
           python - <<'PY'
           from pathlib import Path
           import yaml
-          for path in Path('.github/workflows').glob('*.yml'):
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
               yaml.safe_load(path.read_text(encoding='utf-8'))
               print('OK', path)
           PY
 
       - name: Validate Cloudflare Worker syntax
         run: node --check cloudflare/telegram-webhook.js
+
+      - name: Verify Worker and workflow inputs match
+        # Worker'ın gönderdiği workflow_dispatch input adları ile workflow'un
+        # beklediği adlar ayrışırsa GitHub dispatch'i 422 ile reddeder.
+        run: |
+          python - <<'PY'
+          import re, sys
+          from pathlib import Path
+          import yaml
+
+          workflow = yaml.safe_load(
+              Path('.github/workflows/telegram-story.yml').read_text(encoding='utf-8')
+          )
+          declared = set(workflow[True]['workflow_dispatch']['inputs'])
+          js = Path('cloudflare/telegram-webhook.js').read_text(encoding='utf-8')
+          sent = set(re.findall(r'\b(telegram_[a-z_]+):', js))
+
+          if sent - declared:
+              sys.exit(f'Worker bilinmeyen input gonderiyor: {sorted(sent - declared)}')
+          missing = {
+              name for name, spec in workflow[True]['workflow_dispatch']['inputs'].items()
+              if spec.get('required') and name not in sent
+          }
+          if missing:
+              sys.exit(f'Worker zorunlu input gondermiyor: {sorted(missing)}')
+          print('workflow_dispatch inputs OK:', sorted(sent))
+          PY

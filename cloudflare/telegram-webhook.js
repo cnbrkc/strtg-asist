@@ -6,13 +6,16 @@
 
 const UPDATE_ID_RE = /^\d{1,32}$/;
 const TELEGRAM_CAPTION_LIMIT = 1024;
+const WORKFLOW_FILE = "telegram-story.yml";
+const WORKFLOW_REF = "main";
+const DISPATCH_ATTEMPTS = 2;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/setup") {
-      return setupWebhook(request, env, url);
+      return setupWebhook(env, url);
     }
 
     if (request.method === "GET") {
@@ -35,93 +38,104 @@ export default {
       return new Response("Bad JSON", { status: 400 });
     }
 
-    const message = update?.message;
-    const chatId = message?.chat?.id;
-    if (!chatId) return new Response("OK", { status: 200 });
-
-    if (!chatAllowed(env, chatId)) {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: "⛔ Bu bot yalnızca yetkili sohbetlerde çalışıyor.",
-      }).catch(() => {});
-      // Telegram aynı update'i tekrar tekrar göndermesin.
-      return new Response("OK", { status: 200 });
-    }
-
-    if (message.text === "/start" || message.text === "/help") {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: helpText(),
-      });
-      return new Response("OK", { status: 200 });
-    }
-
-    const image = extractImage(message);
-    if (!image) {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: "🖼️ Lütfen bir görsel gönder ve açıklama alanını şu biçimde doldur:\n\n"
-          + "İLK SATIR: başlık\n"
-          + "Diğer satırlar: alt metin / fiyat / detay\n\n"
-          + "Görseli Telegram'da Fotoğraf olarak göndermen en iyi sonucu verir.",
-      });
-      return new Response("OK", { status: 200 });
-    }
-
-    const caption = String(message.caption || "").trim();
-    if (!caption) {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: "✍️ Görseli aldım. Şimdi görseli açıklama ekleyerek tekrar gönder.\n\n"
-          + "İlk satır başlık, sonraki satırlar alt metin olacak.",
-      });
-      return new Response("OK", { status: 200 });
-    }
-    if (caption.length > TELEGRAM_CAPTION_LIMIT) {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: `⚠️ Açıklama ${TELEGRAM_CAPTION_LIMIT} karakteri geçemez. Kısaltıp tekrar gönder.`,
-      });
-      return new Response("OK", { status: 200 });
-    }
-
-    const updateId = String(update.update_id ?? "");
-    if (!UPDATE_ID_RE.test(updateId)) return new Response("OK", { status: 200 });
-
+    // Her yol 200 döner: Telegram 2xx olmayan yanıtta aynı update'i tekrar
+    // gönderir ve bu, aynı görsel için üst üste kart üretilmesine yol açar.
     try {
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: "📥 Görselini ve metnini aldım. Story kartı hazırlanıyor...",
-      });
-
-      const dispatch = await dispatchWorkflow(env, {
-        file_id: image.file_id,
-        chat_id: String(chatId),
-        caption,
-        filename: image.filename || `telegram_${updateId}.jpg`,
-        update_id: updateId,
-      });
-
-      if (!dispatch.ok) {
-        const detail = (await dispatch.text()).slice(0, 700);
-        await telegram(env, "sendMessage", {
-          chat_id: chatId,
-          text: `❌ Üretim kuyruğa alınamadı.\n\nHTTP ${dispatch.status}\n${detail}`,
-        }).catch(() => {});
-        return new Response("GitHub dispatch failed", { status: 502 });
-      }
+      await handleUpdate(env, update);
     } catch (error) {
-      console.log("Story dispatch failed", String(error).slice(0, 1000));
-      await telegram(env, "sendMessage", {
-        chat_id: chatId,
-        text: "❌ Story kartı başlatılamadı. Birkaç saniye sonra tekrar dene.",
-      }).catch(() => {});
-      return new Response("Dispatch failed", { status: 502 });
+      console.log("Webhook handler failed", String(error).slice(0, 1000));
     }
-
     return new Response("OK", { status: 200 });
   },
 };
+
+async function handleUpdate(env, update) {
+  const message = update?.message;
+  const chatId = message?.chat?.id;
+  if (!chatId) return;
+
+  if (!chatAllowed(env, chatId)) {
+    await notify(env, chatId, "⛔ Bu bot yalnızca yetkili sohbetlerde çalışıyor.");
+    return;
+  }
+
+  if (isCommand(message?.text, "start") || isCommand(message?.text, "help")) {
+    await notify(env, chatId, helpText());
+    return;
+  }
+
+  const image = extractImage(message);
+  if (!image) {
+    await notify(
+      env,
+      chatId,
+      "🖼️ Lütfen bir görsel gönder ve açıklama alanını şu biçimde doldur:\n\n"
+        + "İLK SATIR: başlık\n"
+        + "Diğer satırlar: alt metin / fiyat / detay\n\n"
+        + "Görseli Telegram'da Fotoğraf olarak göndermen en iyi sonucu verir.",
+    );
+    return;
+  }
+
+  const caption = String(message.caption || "").trim();
+  if (!caption) {
+    await notify(
+      env,
+      chatId,
+      "✍️ Görseli aldım. Şimdi görseli açıklama ekleyerek tekrar gönder.\n\n"
+        + "İlk satır başlık, sonraki satırlar alt metin olacak.",
+    );
+    return;
+  }
+
+  // Telegram sınırı kod noktası bazlıdır; String.length emojileri iki sayar.
+  if ([...caption].length > TELEGRAM_CAPTION_LIMIT) {
+    await notify(
+      env,
+      chatId,
+      `⚠️ Açıklama ${TELEGRAM_CAPTION_LIMIT} karakteri geçemez. Kısaltıp tekrar gönder.`,
+    );
+    return;
+  }
+
+  const updateId = String(update.update_id ?? "");
+  if (!UPDATE_ID_RE.test(updateId)) return;
+
+  await notify(env, chatId, "📥 Görselini ve metnini aldım. Story kartı hazırlanıyor...");
+
+  const dispatch = await dispatchWorkflow(env, {
+    file_id: image.file_id,
+    chat_id: String(chatId),
+    caption,
+    filename: image.filename || `telegram_${updateId}.jpg`,
+    update_id: updateId,
+  });
+
+  if (!dispatch.ok) {
+    const detail = (await dispatch.text().catch(() => "")).slice(0, 700);
+    console.log("GitHub dispatch failed", dispatch.status, detail);
+    await notify(
+      env,
+      chatId,
+      `❌ Üretim kuyruğa alınamadı.\n\nHTTP ${dispatch.status}\n${detail}\n\n`
+        + "Birkaç saniye sonra görseli tekrar gönderebilirsin.",
+    );
+  }
+}
+
+function isCommand(text, name) {
+  // Gruplarda Telegram komutu `/start@BotAdi` biçiminde iletir.
+  return new RegExp(`^/${name}(@[A-Za-z0-9_]+)?$`).test(String(text || "").trim());
+}
+
+/** Bildirim gönderemezsek akışı kesmeyelim; hata log'a düşsün. */
+async function notify(env, chatId, text) {
+  try {
+    await telegram(env, "sendMessage", { chat_id: chatId, text });
+  } catch (error) {
+    console.log("sendMessage failed", String(error).slice(0, 500));
+  }
+}
 
 function helpText() {
   return "🤖 STR Story Asistanı hazır.\n\n"
@@ -167,22 +181,31 @@ function chatAllowed(env, chatId) {
   return !allowlist || allowlist.has(String(chatId));
 }
 
-async function setupWebhook(request, env, url) {
+async function setupWebhook(env, url) {
   const key = url.searchParams.get("key");
   if (!env.TELEGRAM_WEBHOOK_SECRET || key !== env.TELEGRAM_WEBHOOK_SECRET) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const result = await telegram(env, "setWebhook", {
-    url: `${url.origin}/`,
-    secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-    allowed_updates: ["message"],
-    drop_pending_updates: true,
+  try {
+    const result = await telegram(env, "setWebhook", {
+      url: `${url.origin}/`,
+      secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+      allowed_updates: ["message"],
+      drop_pending_updates: true,
+    });
+    return text(result.ok ? "OK - Telegram webhook aktif.\n" : `ERROR - ${JSON.stringify(result)}\n`,
+      result.ok ? 200 : 500);
+  } catch (error) {
+    return text(`ERROR - ${String(error).slice(0, 500)}\n`, 500);
+  }
+}
+
+function text(body, status) {
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
   });
-  return new Response(
-    result.ok ? "OK - Telegram webhook aktif.\n" : `ERROR - ${JSON.stringify(result)}\n`,
-    { status: result.ok ? 200 : 500, headers: { "content-type": "text/plain; charset=utf-8" } },
-  );
 }
 
 async function dispatchWorkflow(env, input) {
@@ -190,26 +213,39 @@ async function dispatchWorkflow(env, input) {
   if (!repository || !env.GITHUB_TOKEN) {
     throw new Error("GITHUB_REPOSITORY veya GITHUB_TOKEN yapılandırılmamış.");
   }
-  return fetch(
-    `https://api.github.com/repos/${repository}/actions/workflows/telegram-story.yml/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "strtg-asist-telegram-webhook",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ ref: "main", inputs: {
-        telegram_file_id: input.file_id,
-        telegram_chat_id: input.chat_id,
-        telegram_caption: input.caption,
-        telegram_filename: input.filename,
-        telegram_update_id: input.update_id,
-      }}),
+
+  const body = JSON.stringify({
+    ref: WORKFLOW_REF,
+    inputs: {
+      telegram_file_id: input.file_id,
+      telegram_chat_id: input.chat_id,
+      telegram_caption: input.caption,
+      telegram_filename: input.filename,
+      telegram_update_id: input.update_id,
     },
-  );
+  });
+
+  let response;
+  for (let attempt = 1; attempt <= DISPATCH_ATTEMPTS; attempt += 1) {
+    response = await fetch(
+      `https://api.github.com/repos/${repository}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "strtg-asist-telegram-webhook",
+          "content-type": "application/json",
+        },
+        body,
+      },
+    );
+    // 4xx yapılandırma hatasıdır, tekrar denemek işe yaramaz.
+    if (response.ok || response.status < 500 || attempt === DISPATCH_ATTEMPTS) break;
+    await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+  }
+  return response;
 }
 
 async function telegram(env, method, payload) {
@@ -222,12 +258,12 @@ async function telegram(env, method, payload) {
       body: JSON.stringify(payload),
     },
   );
-  const text = await response.text();
+  const raw = await response.text();
   let result;
   try {
-    result = JSON.parse(text);
+    result = JSON.parse(raw);
   } catch {
-    result = { ok: false, description: text };
+    result = { ok: false, description: raw };
   }
   if (!response.ok || !result.ok) {
     throw new Error(`Telegram API ${response.status}: ${result.description || "bilinmeyen hata"}`);

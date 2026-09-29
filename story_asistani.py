@@ -1,16 +1,17 @@
 """Yerel Streamlit arayüzü.
 
-Telegram üretimi için kullanılan saf motor ``core.story_card`` içindedir. Bu
-sayfa, eski str-asist kullanımını korumak isteyenler için isteğe bağlıdır.
+Telegram üretimi için kullanılan saf motor ``strtg_asist.story_card`` içindedir.
+Bu sayfa, eski str-asist kullanımını korumak isteyenler için isteğe bağlıdır.
 """
+from __future__ import annotations
+
 import base64
-import os
 import tempfile
+from pathlib import Path
 
 import streamlit as st
 
-from core.story_card import create_social_card
-
+from strtg_asist.story_card import StoryCardError, create_social_card
 
 st.set_page_config(page_title="Story Asistanım", page_icon="📸", layout="centered")
 st.title("📸 Story Asistanım")
@@ -39,33 +40,37 @@ uploaded_file = st.file_uploader(
 if st.button("🎨 Şablonu Oluştur", type="primary", use_container_width=True):
     if uploaded_file is None:
         st.warning("Lütfen bir görsel yükleyin!")
+    elif not title_text.strip():
+        # Başlık boşsa motor alt metnin ilk satırını başlık sayıp büyük harfe
+        # çevirirdi; kullanıcı ne olduğunu anlamadan yanlış kart alıyordu.
+        st.warning("Lütfen başlık alanını doldurun. İlk satır her zaman başlıktır.")
     else:
         with st.spinner("Şablon hazırlanıyor..."):
-            temp_dir = tempfile.mkdtemp(prefix="strtg-")
-            input_path = os.path.join(temp_dir, "input_img.png")
-            output_path = os.path.join(temp_dir, "story_card.png")
-            with open(input_path, "wb") as output:
-                output.write(uploaded_file.getbuffer())
+            # TemporaryDirectory: her üretimde /tmp altında dizin biriktirmeyi önler.
+            with tempfile.TemporaryDirectory(prefix="strtg-") as temp_dir:
+                input_path = Path(temp_dir) / "input_img.png"
+                output_path = Path(temp_dir) / "story_card.png"
+                input_path.write_bytes(uploaded_file.getbuffer())
 
-            result_path = create_social_card(
-                f"{title_text}\n{body_text}", input_path, output_path
-            )
-            if result_path == output_path and os.path.exists(result_path):
-                st.success("Şablon başarıyla oluşturuldu!")
-                with open(result_path, "rb") as output:
-                    b64 = base64.b64encode(output.read()).decode()
-                st.markdown(
-                    f'<img src="data:image/png;base64,{b64}" '
-                    'style="width:100%; border-radius:15px; '
-                    'box-shadow:0 4px 15px rgba(0,0,0,0.5);" alt="Story Kart">',
-                    unsafe_allow_html=True,
-                )
-                with open(result_path, "rb") as output:
+                try:
+                    create_social_card(
+                        f"{title_text}\n{body_text}", str(input_path), str(output_path)
+                    )
+                    card_bytes = output_path.read_bytes()
+                except (StoryCardError, OSError) as exc:
+                    st.error(f"Şablon oluşturulamadı: {exc}")
+                else:
+                    st.success("Şablon başarıyla oluşturuldu!")
+                    b64 = base64.b64encode(card_bytes).decode()
+                    st.markdown(
+                        f'<img src="data:image/png;base64,{b64}" '
+                        'style="width:100%; border-radius:15px; '
+                        'box-shadow:0 4px 15px rgba(0,0,0,0.5);" alt="Story Kart">',
+                        unsafe_allow_html=True,
+                    )
                     st.download_button(
                         "⬇️ Story kartını indir",
-                        data=output,
+                        data=card_bytes,
                         file_name="story_card.png",
                         mime="image/png",
                     )
-            else:
-                st.error("Şablon oluşturulamadı. Konsoldaki log'a bak.")

@@ -1,2 +1,2 @@
-# GitHub Actions'ta Streamlit gerekmez; hızlı ve küçük runtime.
+# GitHub Actions story üretimi: Streamlit gerekmez, HTTP çağrıları stdlib ile yapılır.
 Pillow>=10.0,<12.0

@@ -1,4 +1,4 @@
-# Yerel Streamlit arayüzü + Telegram story üretimi
+# Yerel Streamlit arayüzü + story üretim motoru.
+# NOT: `requests` kaldırıldı — depoda hiçbir modül import etmiyordu.
 Pillow>=10.0,<12.0
-requests>=2.31,<3.0
 streamlit>=1.40,<2.0
