@@ -61,6 +61,12 @@ jobs:
       - name: Validate Cloudflare Worker syntax
         run: node --check cloudflare/telegram-webhook.js
 
+      - name: Validate Cloudflare Worker deploy config
+        # Cloudflare Workers Builds kök dizinde `wrangler deploy` çalıştırır.
+        # Kökte wrangler.toml yoksa ya da `main` var olmayan bir dosyayı
+        # gösteriyorsa otomatik dağıtım kırılır; PR'da yakalayalım.
+        run: npx --yes wrangler@4 deploy --dry-run --outdir "$RUNNER_TEMP/worker-build"
+
       - name: Verify Worker and workflow inputs match
         # Worker'ın gönderdiği workflow_dispatch input adları ile workflow'un
         # beklediği adlar ayrışırsa GitHub dispatch'i 422 ile reddeder.

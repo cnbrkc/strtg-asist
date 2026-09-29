@@ -51,13 +51,13 @@ strtg-asist/
 │  └─ telegram_worker.py         # Actions içinde görsel indirme, üretim ve gönderim
 ├─ story_asistani.py             # Yerel Streamlit arayüzü (isteğe bağlı)
 ├─ cloudflare/
-│  ├─ telegram-webhook.js        # Telegram webhook'u ve GitHub dispatch köprüsü
-│  └─ wrangler.toml              # Worker yapılandırması
+│  └─ telegram-webhook.js        # Telegram webhook'u ve GitHub dispatch köprüsü
 ├─ .github/workflows/
 │  ├─ telegram-story.yml         # Üretim workflow'u
 │  └─ ci.yml                     # Test + lint + yapılandırma tutarlılık kontrolleri
 ├─ assets/                       # Logo ve Roboto fontları
 ├─ tests/                        # Kart motoru ve Telegram worker testleri
+├─ wrangler.toml                 # Worker yapılandırması (kökte olmalı, aşağıya bak)
 ├─ pyproject.toml                # pytest + ruff yapılandırması
 ├─ requirements.txt              # Streamlit arayüzü + motor
 ├─ requirements-telegram.txt     # Actions üretim runtime'ı (yalnızca Pillow)
@@ -121,12 +121,16 @@ Node.js kurulu değilse önce Node.js LTS kur. Sonra repo klasöründe:
 npx wrangler login
 ```
 
-Bu repodaki hazır ayar dosyası `cloudflare/wrangler.toml` içindedir. Worker adı `strtg-asist-webhook`, GitHub reposu da `cnbrkc/strtg-asist` olarak ayarlanmıştır.
+Bu repodaki hazır ayar dosyası depo kökündeki `wrangler.toml` içindedir. Worker adı `strtg-asist-webhook`, GitHub reposu da `cnbrkc/strtg-asist` olarak ayarlanmıştır.
+
+> `wrangler.toml` depo kökünde durmak zorunda: Cloudflare'ın GitHub entegrasyonu
+> (**Workers Builds**) kök dizinde `npx wrangler deploy` çalıştırır ve yapılandırmayı
+> kökte arar. Dosyayı alt klasöre taşırsan otomatik dağıtım kırılır.
 
 ### 4.2 Worker'ı yayınla
 
 ```bash
-npx wrangler deploy --config cloudflare/wrangler.toml
+npx wrangler deploy
 ```
 
 Komut sonunda buna benzer bir adres göreceksin:
@@ -142,9 +146,9 @@ Bu adresi not al; `WORKER_URL` olarak kullanacağız.
 Aşağıdaki komutları tek tek çalıştır. Komut senden secret değerini güvenli şekilde ister; değerleri terminal komutunun içine yazmak zorunda kalmazsın.
 
 ```bash
-npx wrangler secret put TELEGRAM_BOT_TOKEN --config cloudflare/wrangler.toml
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --config cloudflare/wrangler.toml
-npx wrangler secret put GITHUB_TOKEN --config cloudflare/wrangler.toml
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put GITHUB_TOKEN
 ```
 
 - `TELEGRAM_BOT_TOKEN`: BotFather token'ı.
@@ -161,7 +165,7 @@ Bu değeri `TELEGRAM_WEBHOOK_SECRET` secret'ı olarak kullan ve sonradan `/setup
 
 ### 4.4 İsteğe bağlı chat allowlist'i ekle
 
-`cloudflare/wrangler.toml` içindeki yorum satırını açıp kendi chat ID'ni yaz:
+Depo kökündeki `wrangler.toml` içindeki yorum satırını açıp kendi chat ID'ni yaz:
 
 ```toml
 [vars]
@@ -172,7 +176,7 @@ ALLOWED_CHAT_IDS = "123456789"
 Ardından tekrar yayınla:
 
 ```bash
-npx wrangler deploy --config cloudflare/wrangler.toml
+npx wrangler deploy
 ```
 
 Birden fazla ID:
