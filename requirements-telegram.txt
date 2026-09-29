@@ -1,0 +1,2 @@
+# GitHub Actions'ta Streamlit gerekmez; hızlı ve küçük runtime.
+Pillow>=10.0,<12.0

@@ -1,0 +1,1 @@
+"""STRtg story üretim çekirdeği."""

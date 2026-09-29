@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.env.*
+
+# IDE / local files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tests / logs
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.log
+
+# Telegram runtime files — user media and generated cards are never committed.
+data/*.jpg
+data/*.jpeg
+data/*.png
+data/*.webp
+data/pending/*.json
+pipeline_result.json
